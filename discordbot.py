@@ -134,7 +134,9 @@ async def on_message(message):
 
     if message.author == app.user:
         return
-  
+
+    if message.author.bot:
+        return
     
     # 메세지 길이가 최대 글자수 돌파하는지 체크
     if message_length > threshold:
