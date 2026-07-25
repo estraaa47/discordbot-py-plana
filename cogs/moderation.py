@@ -8,19 +8,56 @@ from discord.ext import commands, tasks
 from settings import SETTINGS
 
 
-WARNING_MESSAGES = [
-    "장문 도배는 멈춰주세요 長文の連投ですか？やめてください！",
-    "장문 도배가 감지되었습니다 長文の連投が確認されました！",
-    "장문은 금지입니다 長文は連投として判断します！やめてください！",
-]
+DEFAULT_LOCALE = discord.Locale.korean
 
-SPAM_MESSAGES = [
-    "{mention}さん、連投は禁止です!",
-    "{mention}さん、連投はやめてください！",
-    "{mention}さん、連投はダメです！",
-    "{mention}さん、チャットが早すぎます",
-    "{mention}さん、連投なんて！管理者に全部言いつけます！",
-]
+LONG_MESSAGE_WARNINGS = {
+    discord.Locale.korean: [
+        "{mention} 선생님, 메시지가 지나치게 깁니다. 내용을 나누어 전송해 주십시오.",
+        "{mention} 선생님, 장문 메시지를 감지했습니다. 채팅 이용에 주의해 주십시오.",
+        (
+            "{mention} 선생님, 장문 전송은 자제해 주십시오. "
+            "같은 행동이 반복되면 이용이 제한될 수 있습니다."
+        ),
+    ],
+    discord.Locale.japanese: [
+        "{mention}先生、メッセージが長すぎます。内容を分けて送信してください。",
+        "{mention}先生、長文メッセージを検知しました。チャットの利用にはご注意ください。",
+        (
+            "{mention}先生、長文の送信はお控えください。"
+            "同じ行為が続く場合、利用を制限する可能性があります。"
+        ),
+    ],
+}
+
+SPAM_WARNINGS = {
+    discord.Locale.korean: [
+        (
+            "{mention} 선생님, 짧은 시간에 너무 많은 메시지가 전송되었습니다. "
+            "잠시 기다려 주십시오."
+        ),
+        "{mention} 선생님, 연속 메시지를 감지했습니다. 채팅 속도를 낮춰 주십시오.",
+        "{mention} 선생님, 도배는 허용되지 않습니다. 같은 행동을 반복하지 마십시오.",
+    ],
+    discord.Locale.japanese: [
+        (
+            "{mention}先生、短時間に多くのメッセージが送信されました。"
+            "少しお待ちください。"
+        ),
+        "{mention}先生、連続したメッセージを検知しました。送信の間隔を空けてください。",
+        "{mention}先生、連投は許可されていません。同じ行為を繰り返さないでください。",
+    ],
+}
+
+RESTRICTED_ROLE_MESSAGES = {
+    discord.Locale.korean: (
+        "{mention} 선생님, 경고가 누적되어 {role} 역할을 부여했습니다."
+        "{managers} 관리자가 확인할 때까지 기다려 주십시오."
+    ),
+    discord.Locale.japanese: (
+        "{mention}先生、警告が累積したため、{role}ロールを付与しました。"
+        "{managers} 管理者の確認が終わるまでお待ちください。"
+    ),
+}
 
 
 class Moderation(commands.Cog):
@@ -62,6 +99,16 @@ class Moderation(commands.Cog):
     def _add_red_card(self, user_id: int) -> None:
         self.red_cards[user_id] = self.red_cards.get(user_id, 0) + 1
 
+    @staticmethod
+    def _get_locale(message) -> discord.Locale:
+        if (
+            message.guild is not None
+            and message.guild.preferred_locale == discord.Locale.japanese
+        ):
+            return discord.Locale.japanese
+
+        return DEFAULT_LOCALE
+
     async def _apply_restricted_role(self, message) -> None:
         if self.red_cards.get(message.author.id, 0) < 2 or message.guild is None:
             return
@@ -83,12 +130,14 @@ class Moderation(commands.Cog):
         manager_mentions = ",".join(
             role.mention for role in (admin_role, semiadmin_role) if role is not None
         )
-
-        await message.channel.send(
-            f"{message.author.mention}, {role.name} 역할을 부여했습니다 "
-            f"役割を与えました！ {manager_mentions} 관리자가 올때까지 기다려주세요 "
-            "管理者がくるまでお待ちください！"
+        managers = f" {manager_mentions}" if manager_mentions else ""
+        locale = self._get_locale(message)
+        restricted_role_message = RESTRICTED_ROLE_MESSAGES[locale].format(
+            mention=message.author.mention,
+            role=role.mention,
+            managers=managers,
         )
+        await message.channel.send(restricted_role_message)
 
     @tasks.loop(minutes=1)
     async def decrease_red_cards(self) -> None:
@@ -107,13 +156,18 @@ class Moderation(commands.Cog):
             return
 
         if len(message.content) > SETTINGS.max_message_length:
-            await message.channel.send(random.choice(WARNING_MESSAGES))
+            locale = self._get_locale(message)
+            warning_message = random.choice(LONG_MESSAGE_WARNINGS[locale]).format(
+                mention=message.author.mention
+            )
+            await message.channel.send(warning_message)
             self._add_red_card(message.author.id)
             await self._apply_restricted_role(message)
             return
 
         if self._is_spamming(message.author.id):
-            spam_message = random.choice(SPAM_MESSAGES).format(
+            locale = self._get_locale(message)
+            spam_message = random.choice(SPAM_WARNINGS[locale]).format(
                 mention=message.author.mention
             )
             await message.channel.send(spam_message)

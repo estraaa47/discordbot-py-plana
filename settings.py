@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -16,19 +16,6 @@ class Settings:
     admin_role_id: int = 888839822184153089
     semiadmin_role_id: int = 888817303188287519
     restricted_role_id: int = 1087892271703261316
-
-    role_channel_id: int = 1032650685180813312
-    role_message_id: int = 1094422274607689759
-    reaction_roles: Dict[str, int] = field(
-        default_factory=lambda: {
-            "🇴": 1087692814462242816,
-            "🇻": 1087691245868032010,
-            "🇦": 1087692165242683392,
-            "🇱": 1087693182441099275,
-            "🇪": 1087693438423666809,
-            "🅾️": 1087693693122773054,
-        }
-    )
 
     max_message_length: int = 300
     spam_window_seconds: int = 2
