@@ -43,21 +43,6 @@ class ReactionRole(commands.Cog):
             f"settings.py의 role_message_id를 {message.id}로 갱신하세요."
         )
 
-    @commands.Cog.listener()
-    async def on_member_join(self, member) -> None:
-        if member.bot:
-            role = member.guild.get_role(SETTINGS.bot_role_id)
-            if role is not None:
-                await member.add_roles(role, reason="Bot 역할 지급")
-            return
-
-        channel = self.bot.get_channel(SETTINGS.welcome_channel_id)
-        if channel is not None:
-            await channel.send(
-                f"{member.mention}さん 日本人ですか？初めまして！"
-                "ruleチャンネルを読んでroleチャンネルで日本を選んでください！"
-            )
-
     async def _update_role(self, payload, *, add: bool) -> None:
         if payload.message_id != SETTINGS.role_message_id:
             return

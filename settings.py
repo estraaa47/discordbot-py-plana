@@ -16,11 +16,9 @@ class Settings:
     admin_role_id: int = 888839822184153089
     semiadmin_role_id: int = 888817303188287519
     restricted_role_id: int = 1087892271703261316
-    bot_role_id: int = 888840043463053333
 
     role_channel_id: int = 1032650685180813312
     role_message_id: int = 1094422274607689759
-    welcome_channel_id: int = 1087554522378948609
     reaction_roles: Dict[str, int] = field(
         default_factory=lambda: {
             "🇴": 1087692814462242816,
