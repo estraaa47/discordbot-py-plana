@@ -159,7 +159,6 @@ class LinkModeration(commands.Cog):
             ("urls", url)
             for url in normalized_urls
         ]
-        params.append(("alt", "json"))
         headers = {
             "Accept": "application/json",
             "X-Goog-Api-Key": self.safe_browsing_api_key,
