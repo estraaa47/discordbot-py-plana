@@ -119,7 +119,24 @@ class Moderation(commands.Cog):
             return
 
         member = message.guild.get_member(message.author.id) or message.author
-        await member.add_roles(role)
+        await member.add_roles(
+            role,
+            reason="누적 경고로 프리즈너 역할 지급",
+        )
+        nationality_role_ids = {
+            SETTINGS.korean_nationality_role_id,
+            SETTINGS.japanese_nationality_role_id,
+        }
+        nationality_roles = [
+            member_role
+            for member_role in member.roles
+            if member_role.id in nationality_role_ids
+        ]
+        if nationality_roles:
+            await member.remove_roles(
+                *nationality_roles,
+                reason="프리즈너 역할 지급으로 국적 역할 회수",
+            )
 
         admin_role = discord.utils.get(
             message.guild.roles, id=SETTINGS.admin_role_id

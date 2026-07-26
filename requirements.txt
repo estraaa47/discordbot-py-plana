@@ -7,6 +7,7 @@ discord.py==2.7.1; python_version >= "3.8"
 frozenlist==1.8.0; python_version >= "3.9"
 idna==3.18; python_version >= "3.9"
 multidict==6.7.1; python_version >= "3.9"
+openai==1.100.2
 propcache==0.5.2; python_version >= "3.10"
 python-dotenv==1.2.2; python_version >= "3.10"
 typing-extensions==4.16.0; python_version >= "3.9"
