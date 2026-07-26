@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 from time import monotonic
@@ -28,6 +29,10 @@ LINK_WARNING_MESSAGES = {
         "メッセージを削除しました。同じ行為を繰り返さないでください。"
     ),
 }
+
+
+class SafeBrowsingAPIError(RuntimeError):
+    pass
 
 
 class LinkModeration(commands.Cog):
@@ -101,6 +106,34 @@ class LinkModeration(commands.Cog):
             return SAFE_BROWSING_DEFAULT_CACHE_SECONDS
         return max(1.0, min(seconds, 24 * 60 * 60))
 
+    @staticmethod
+    def _safe_browsing_error_message(response_status, response_reason, body):
+        status_name = ""
+        message = ""
+        try:
+            error_data = json.loads(body).get("error", {})
+            status_name = str(error_data.get("status") or "")
+            message = str(error_data.get("message") or "")
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+        status_name = re.sub(r"\s+", " ", status_name).strip()[:100]
+        message = re.sub(r"\s+", " ", message).strip()[:500]
+        response_reason = re.sub(
+            r"\s+",
+            " ",
+            str(response_reason or ""),
+        ).strip()[:100]
+
+        details = [f"HTTP {response_status}"]
+        if status_name:
+            details.append(status_name)
+        if message:
+            details.append(message)
+        elif response_reason:
+            details.append(response_reason)
+        return " | ".join(details)
+
     async def _query_safe_browsing(self, urls):
         normalized_urls = tuple(sorted({
             self._normalize_url(url)
@@ -136,7 +169,15 @@ class LinkModeration(commands.Cog):
             params=params,
             headers=headers,
         ) as response:
-            response.raise_for_status()
+            if response.status >= 400:
+                response_body = await response.text()
+                raise SafeBrowsingAPIError(
+                    self._safe_browsing_error_message(
+                        response.status,
+                        response.reason,
+                        response_body,
+                    )
+                )
             data = await response.json()
 
         threat_types = {
@@ -291,9 +332,17 @@ class LinkModeration(commands.Cog):
 
             check_failed = False
             if isinstance(safe_browsing_result, Exception):
+                error_detail = (
+                    str(safe_browsing_result)
+                    if isinstance(
+                        safe_browsing_result,
+                        SafeBrowsingAPIError,
+                    )
+                    else type(safe_browsing_result).__name__
+                )
                 print(
                     "[LinkModeration] Safe Browsing 검사 오류: "
-                    f"{type(safe_browsing_result).__name__}"
+                    f"{error_detail}"
                 )
                 threat_types = set()
                 check_failed = True
