@@ -15,6 +15,12 @@ from settings import SETTINGS
 SAFE_BROWSING_URL = "https://safebrowsing.googleapis.com/v5/urls:search"
 SAFE_BROWSING_MAX_URLS = 50
 SAFE_BROWSING_DEFAULT_CACHE_SECONDS = 300
+SAFE_BROWSING_THREAT_TYPES = {
+    1: "MALWARE",
+    2: "SOCIAL_ENGINEERING",
+    3: "UNWANTED_SOFTWARE",
+    4: "POTENTIALLY_HARMFUL_APPLICATION",
+}
 URL_PATTERN = re.compile(
     r"(https?://[^\s]+|www\.[^\s]+|"
     r"[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)"
@@ -33,6 +39,104 @@ LINK_WARNING_MESSAGES = {
 
 class SafeBrowsingAPIError(RuntimeError):
     pass
+
+
+def _read_protobuf_varint(data, offset):
+    value = 0
+    for shift in range(0, 70, 7):
+        if offset >= len(data):
+            raise ValueError("truncated protobuf varint")
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, offset
+    raise ValueError("protobuf varint is too long")
+
+
+def _iter_protobuf_fields(data):
+    offset = 0
+    while offset < len(data):
+        tag, offset = _read_protobuf_varint(data, offset)
+        field_number = tag >> 3
+        wire_type = tag & 0x07
+        if field_number == 0:
+            raise ValueError("invalid protobuf field number")
+
+        if wire_type == 0:
+            value, offset = _read_protobuf_varint(data, offset)
+        elif wire_type == 1:
+            end = offset + 8
+            if end > len(data):
+                raise ValueError("truncated protobuf fixed64 field")
+            value = data[offset:end]
+            offset = end
+        elif wire_type == 2:
+            length, offset = _read_protobuf_varint(data, offset)
+            end = offset + length
+            if end > len(data):
+                raise ValueError("truncated protobuf bytes field")
+            value = data[offset:end]
+            offset = end
+        elif wire_type == 5:
+            end = offset + 4
+            if end > len(data):
+                raise ValueError("truncated protobuf fixed32 field")
+            value = data[offset:end]
+            offset = end
+        else:
+            raise ValueError(f"unsupported protobuf wire type: {wire_type}")
+
+        yield field_number, wire_type, value
+
+
+def _parse_safe_browsing_response(data):
+    threat_type_numbers = set()
+    cache_seconds = SAFE_BROWSING_DEFAULT_CACHE_SECONDS
+
+    for field_number, wire_type, value in _iter_protobuf_fields(data):
+        if field_number == 1 and wire_type == 2:
+            for threat_field, threat_wire_type, threat_value in (
+                _iter_protobuf_fields(value)
+            ):
+                if threat_field != 2:
+                    continue
+                if threat_wire_type == 0:
+                    threat_type_numbers.add(threat_value)
+                elif threat_wire_type == 2:
+                    offset = 0
+                    while offset < len(threat_value):
+                        threat_type, offset = _read_protobuf_varint(
+                            threat_value,
+                            offset,
+                        )
+                        threat_type_numbers.add(threat_type)
+        elif field_number == 2 and wire_type == 2:
+            seconds = 0
+            nanos = 0
+            for duration_field, duration_wire_type, duration_value in (
+                _iter_protobuf_fields(value)
+            ):
+                if duration_wire_type != 0:
+                    continue
+                if duration_field == 1:
+                    seconds = duration_value
+                elif duration_field == 2:
+                    nanos = duration_value
+            cache_seconds = max(
+                1.0,
+                min(seconds + nanos / 1_000_000_000, 24 * 60 * 60),
+            )
+
+    threat_types = {
+        SAFE_BROWSING_THREAT_TYPES.get(
+            threat_type,
+            f"UNKNOWN_THREAT_TYPE_{threat_type}",
+        )
+        for threat_type in threat_type_numbers
+        if threat_type != 0
+    }
+    return threat_types, cache_seconds
 
 
 class LinkModeration(commands.Cog):
@@ -99,14 +203,6 @@ class LinkModeration(commands.Cog):
         return f"https://{url}"
 
     @staticmethod
-    def _cache_duration_seconds(value) -> float:
-        try:
-            seconds = float(str(value).removesuffix("s"))
-        except (TypeError, ValueError):
-            return SAFE_BROWSING_DEFAULT_CACHE_SECONDS
-        return max(1.0, min(seconds, 24 * 60 * 60))
-
-    @staticmethod
     def _safe_browsing_error_message(response_status, response_reason, body):
         status_name = ""
         message = ""
@@ -160,7 +256,7 @@ class LinkModeration(commands.Cog):
             for url in normalized_urls
         ]
         headers = {
-            "Accept": "application/json",
+            "Accept": "application/x-protobuf",
             "X-Goog-Api-Key": self.safe_browsing_api_key,
         }
         async with self.http_session.get(
@@ -177,16 +273,16 @@ class LinkModeration(commands.Cog):
                         response_body,
                     )
                 )
-            data = await response.json()
+            response_body = await response.read()
 
-        threat_types = {
-            threat_type
-            for threat in data.get("threats", [])
-            for threat_type in threat.get("threatTypes", [])
-        }
-        cache_seconds = self._cache_duration_seconds(
-            data.get("cacheDuration")
-        )
+        try:
+            threat_types, cache_seconds = _parse_safe_browsing_response(
+                response_body
+            )
+        except ValueError as error:
+            raise SafeBrowsingAPIError(
+                f"Safe Browsing protobuf 응답 해석 실패: {error}"
+            ) from error
         self.safe_browsing_cache[normalized_urls] = {
             "expires_at": now + cache_seconds,
             "threat_types": tuple(sorted(threat_types)),
